@@ -7,12 +7,15 @@ from math import sqrt
 class AdaFactor(torch.optim.Optimizer):
     def __init__(self, params, lr=None, beta1=0.9, beta2=0.999, eps1=1e-30, 
                  eps2=1e-3, cliping_threshold=1,non_constant_decay = True,
-                 enable_factorization=True, ams_grad=True, weight_decay=0):
+                 enable_factorization=True, ams_grad=True, weight_decay=0,
+                 lr_decay_step=None, lr_decay_factor=None):
         
         enable_momentum =  beta1 != 0
         self.beta1_glob = copy(beta1)
         self.beta2_glob = copy(beta2)
         self.lr_glob = copy(lr)
+        self.lr_decay_step = copy(lr_decay_step)
+        self.lr_decay_factor = copy(lr_decay_factor)
         
         beta1 = self.beta1_glob if hasattr(beta1,'__call__') else lambda x: self.beta1_glob
         beta2 = self.beta2_glob if hasattr(beta2,'__call__') else lambda x: self.beta2_glob
@@ -27,20 +30,32 @@ class AdaFactor(torch.optim.Optimizer):
         relative_step_size  = True
         
         if lr is None:
-            #default value from article
-            lr = lambda t: min(1e-2, 1 / sqrt(t))
-            
-        if isinstance(self.lr_glob, float):
-            lr=lambda x: self.lr_glob
-            relative_step_size = False
-  
-                         
+            lr = self._piecewise_constant_lr
+        elif isinstance(self.lr_glob, float):
+            self.fixed_lr = self.lr_glob
+            lr = self._fixed_lr
+        else:
+            raise ValueError("Invalid learning rate configuraiton")
+
         defaults = dict(lr=lr, beta1=beta1, beta2=beta2, eps1=eps1,
                         eps2=eps2, cliping_threshold=cliping_threshold,                                                                                 weight_decay=weight_decay,ams_grad=ams_grad,
                         enable_factorization=enable_factorization,
                         enable_momentum=enable_momentum,relative_step_size=relative_step_size)
         
         super(AdaFactor, self).__init__(params, defaults)
+
+    def _fixed_lr(self, step):
+        return self.fixed_lr
+
+    def _piecewise_constant_lr(self, step):
+        if self.lr_decay_step is None or self.lr_decay_factor is None:
+            return min(1e-2, 1 / sqrt(step))
+        else:
+            factor = 1
+            for decay_step in self.lr_decay_step:
+                if step >= decay_step:
+                    factor *= self.lr_decay_factor
+            return max(1e-2, (1 / sqrt(step)) * factor)
 
     def __setstate__(self, state):
         super(AdaFactor, self).__setstate__(state)       
